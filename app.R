@@ -2,17 +2,18 @@ library(shiny)
 library(DT)
 library(PerformanceAnalytics)
 library(ggplot2)
-library(rusquant)
+#library(rusquant)
+library(quantmod)
 library(plotly)
 
-function(input, output, session) {
+server <- function(input, output, session) {
   generalData <- reactive({
     stocks <- read.csv2(paste0('./data/', input$tickersList), stringsAsFactors = F)
     days.ago <- difftime(input$dateTo, input$dateFrom, units = c("days"))
     rf.rate = as.numeric(input$rfrInput / 365 * days.ago)
     
     market.prices <- as.numeric(getSymbols(input$indexTicker, from = input$dateFrom, to = input$dateTo, 
-                                           src = "Finam", auto.assign = FALSE)[, 4])
+                                           src = "yahoo", auto.assign = FALSE)[, 4])
     market.returns <- na.omit(diff(market.prices) / market.prices[1 : (length(market.prices) - 1)])
     m.return <- (market.prices[length(market.prices)] - market.prices[1]) / market.prices[1] * 100
     
@@ -21,7 +22,7 @@ function(input, output, session) {
                            function(x) {
                              incProgress(1 / nrow(stocks), detail = x)
                              as.numeric(getSymbols(as.character(x), from = input$dateFrom, to = input$dateTo,
-                                                   src = "Finam", auto.assign = F)[, 4])
+                                                   src = "yahoo", auto.assign = F)[, 4])
                            }, 
                            simplify=FALSE, USE.NAMES=TRUE)
     
@@ -38,6 +39,7 @@ function(input, output, session) {
                incProgress(1 / nrow(stocks))
                asset.returns <- na.omit(diff(x) / x[1 : (length(x) - 1)])
                beta = cov(asset.returns, market.returns) / var(market.returns)
+
                
                lm.df = data.frame(market = market.prices, asset = x)
                lm.fit = lm(formula = market~asset, data = lm.df)
@@ -61,7 +63,7 @@ function(input, output, session) {
 
   output$stocksTable <- DT::renderDataTable({
     stocks.df <- generalData()[[1]]
-    stocks.df#[, c("ticker", "beta", "alpha", "r2")]
+    stocks.df[, c("ticker", "beta", "alpha", "r2")]
   }, server = TRUE, selection = "single",
   options = list(rowCallback = JS(
     'function(row, data) {
@@ -173,3 +175,84 @@ function(input, output, session) {
     updateDateInput(session, "dateTo", value=value.to)
   })
 }
+
+ui <- shinyUI(fluidPage(
+  tags$style(type = 'text/css', 'html, body {width:100%;height:100%}'),
+  tags$title("Stock Market analysis by CAPM"),
+  fluidRow(
+    column(4, 
+        tags$h4("Parameters"),
+        wellPanel(
+          fluidRow(
+            column(4,
+                   textInput("indexTicker", "Index", value = "^GSPC", width = "100%")
+            ),
+            column(8,
+                   selectInput("tickersList", "Tickers list", c("stocks.csv"), width = "100%")
+            )
+          ),
+           fluidRow(
+              column(4,
+                     dateInput(inputId = "dateFrom", label = "From", value = seq(Sys.Date(), length=2, by = "-364 days")[2],
+                               format = "yyyy-mm-dd", width = "100%")
+              ),
+              column(4,
+                     dateInput(inputId = "dateTo", label = "To", value = Sys.Date(),
+                               format = "yyyy-mm-dd", width = "100%")
+              ),
+              column(4,
+                     numericInput(inputId = "rfrInput", label = "Risk-free rate, %", value = 6.5, 
+                                  min = 0.0, max = 100.0, step = 0.25, width = "100%")
+              )
+           ),
+           tags$b("Pick a last period quickly"),
+           fluidRow(
+              column(3,
+                    actionButton(inputId = "last1Button", label = "1 month", width = "100%")
+              ),
+              column(3,
+                     actionButton(inputId = "last3Button", label = "3 months", width = "100%")
+              ),
+              column(3,
+                     actionButton(inputId = "last6Button", label = "6 months", width = "100%")
+              ),
+              column(3,
+                     actionButton(inputId = "lastYearButton", label = "Year", width = "100%")
+              )
+            )
+        )
+    ),
+    column(8,
+      tags$h4("Analyzed stocks"),
+      fluidRow(
+        column(12,
+          wellPanel(
+            DT::dataTableOutput(outputId = "stocksTable", width = "100%")
+          )
+        )
+      )
+    )
+  ),
+  fluidRow(
+    column(12,
+      tags$h4("Advanced plots"),
+        wellPanel(
+            column(3,
+                   plotly::plotlyOutput(outputId = "smlPlot", width = "100%")
+          ),
+            column(3,
+                   plotly::plotlyOutput(outputId = "alphaHist", width = "100%")
+          ),
+            column(3,
+                   plotly::plotlyOutput(outputId = "assetsPlot", width = "100%")
+          ),
+            column(3,
+                   plotly::plotlyOutput(outputId = "scatterPlot", width = "100%")
+            )
+          )
+    )
+  )
+
+))
+
+shinyApp(ui = ui, server = server)
